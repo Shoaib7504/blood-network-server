@@ -1,0 +1,8 @@
+# Node
+node_modules/
+
+# Environment / secrets
+.env
+
+# Google/Blood donation service key
+blood-donation-serviceKey.json
