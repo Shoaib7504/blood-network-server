@@ -86,6 +86,14 @@ async function run() {
 
     })
 
+
+    // Get data the Register User
+    app.get('/my-request/:email', async (req, res) => {
+      const email = req.params.email
+      const result = await requestCollection.find({ user: email }).toArray()
+      res.send(result)
+    })
+
     await client.db('admin').command({ ping: 1 })
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'
