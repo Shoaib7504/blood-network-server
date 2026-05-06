@@ -67,7 +67,7 @@ async function run() {
     // Send a ping to confirm a successful connection
     const db = client.db('blood-donation');
     const requestCollection = db.collection('requests')
-
+    const userCollection = db.collection('users')
     //  save data to mongodb
     app.post('/request', async (req, res) => {
       const requestData = req.body
@@ -80,7 +80,7 @@ async function run() {
     // get data from serverSide
     app.get('/request', async (req, res) => {
       const result = await requestCollection.find().toArray()
-      console.log(result);
+      // console.log(result);
 
       res.send(result)
 
@@ -92,6 +92,41 @@ async function run() {
       const email = req.params.email
       const result = await requestCollection.find({ user: email }).toArray()
       res.send(result)
+    })
+
+    // Save or updata user data in mongodb
+    app.post('/user', async (req, res) => {
+      const userData = req.body
+      userData.created_at = new Date().toISOString()
+      userData.last_logIn = new Date().toISOString()
+
+      userData.role='donor'
+      const query = {
+        email: userData.email
+      }
+
+      const alreadyExists = await userCollection.findOne(query)
+      console.log("User already exist---->", !!alreadyExists);
+      if (alreadyExists) {
+        console.log("updating user info.....");
+        const result = await userCollection.updateOne(query, {
+          $set: {
+            last_logIn: new Date().toISOString()
+          },
+        })
+     return   res.send(result)
+      }
+
+ console.log("saving user info.....");
+      const result = await userCollection.insertOne(userData)
+
+    })
+
+    // get user role
+    app.get('/user/role/:email',async(req,res)=>{
+      const email=req.params.email
+      const result=await userCollection.findOne({email})
+      res.send({role:result?.role})
     })
 
     await client.db('admin').command({ ping: 1 })
