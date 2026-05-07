@@ -68,6 +68,7 @@ async function run() {
     const db = client.db('blood-donation');
     const requestCollection = db.collection('requests')
     const userCollection = db.collection('users')
+    const volunteerRequestCollection = db.collection('volunteerRequest')
     //  save data to mongodb
     app.post('/request', async (req, res) => {
       const requestData = req.body
@@ -100,7 +101,7 @@ async function run() {
       userData.created_at = new Date().toISOString()
       userData.last_logIn = new Date().toISOString()
 
-      userData.role='donor'
+      userData.role = 'donor'
       const query = {
         email: userData.email
       }
@@ -114,20 +115,35 @@ async function run() {
             last_logIn: new Date().toISOString()
           },
         })
-     return   res.send(result)
+        return res.send(result)
       }
 
- console.log("saving user info.....");
+      console.log("saving user info.....");
       const result = await userCollection.insertOne(userData)
 
     })
 
     // get user role
-    app.get('/user/role/:email',async(req,res)=>{
-      const email=req.params.email
-      const result=await userCollection.findOne({email})
-      res.send({role:result?.role})
+    app.get('/user/role', verifyJWT, async (req, res) => {
+      const result = await userCollection.findOne({ email: req.tokenEmail })
+      res.send({ role: result?.role })
     })
+
+    // save become a Volunteer 
+    app.post('/become-volunteer', verifyJWT, async (req, res) => {
+      const email = req.tokenEmail
+      const alreadyExists = await volunteerRequestCollection.findOne({ email })
+      if (alreadyExists) {
+        return res
+         .status(409)
+         .send({ message: 'Already Requested,please wait!' })
+      }
+
+      const result = await volunteerRequestCollection.insertOne({ email })
+      res.send(result)
+    })
+
+    //
 
     await client.db('admin').command({ ping: 1 })
     console.log(
