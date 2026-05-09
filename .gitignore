@@ -6,3 +6,4 @@ node_modules/
 
 # Google/Blood donation service key
 blood-donation-serviceKey.json
+.vercel
