@@ -475,7 +475,7 @@ app.post("/payment-success", async (req, res) => {
   }
 });
 
-app.get("/donation", verifyJWT, verifyADMIN, async (req, res) => {
+app.get("/donation", async (req, res) => {
   try {
     const result = await donationCollection.find().toArray();
 
