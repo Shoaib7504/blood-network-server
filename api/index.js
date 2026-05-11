@@ -21,16 +21,15 @@ app.use(
 app.use(express.json());
 
 
+// ─── FIREBASE INIT ────────────────────────────────────────────────────────────
+
 let isFirebaseInitialized = false;
 
 try {
   const fbServiceKeyBase64 = process.env.FB_SERVICE_KEY;
 
   if (fbServiceKeyBase64) {
-    const decoded = Buffer.from(
-      fbServiceKeyBase64,
-      "base64"
-    ).toString("utf-8");
+    const decoded = Buffer.from(fbServiceKeyBase64, "base64").toString("utf-8");
 
     const serviceAccount = JSON.parse(decoded);
 
@@ -50,8 +49,7 @@ try {
 }
 
 
-  // JWT VERIFY
-
+// ─── JWT VERIFY ───────────────────────────────────────────────────────────────
 
 const verifyJWT = async (req, res, next) => {
   try {
@@ -85,6 +83,9 @@ const verifyJWT = async (req, res, next) => {
   }
 };
 
+
+// ─── MONGODB ──────────────────────────────────────────────────────────────────
+
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -98,10 +99,9 @@ let userCollection;
 let volunteerRequestCollection;
 let donationCollection;
 
-
 async function connectDB() {
   try {
-    // await client.connect();
+    await client.connect(); // FIX: was commented out — MongoDB won't connect without this
 
     console.log("MongoDB connected");
 
@@ -122,6 +122,8 @@ async function connectDB() {
 
 connectDB();
 
+
+// ─── ROLE MIDDLEWARES ─────────────────────────────────────────────────────────
 
 const verifyADMIN = async (req, res, next) => {
   try {
@@ -144,7 +146,6 @@ const verifyADMIN = async (req, res, next) => {
     });
   }
 };
-
 
 const verifyVOLUNTEER = async (req, res, next) => {
   try {
@@ -169,13 +170,16 @@ const verifyVOLUNTEER = async (req, res, next) => {
 };
 
 
+// ─── ROUTES ───────────────────────────────────────────────────────────────────
 
 app.get("/", (req, res) => {
   res.send("Blood Donation Server Running");
 });
 
 
-app.post("/request", async (req, res) => {
+// ── Request Routes ──
+
+app.post("/request", verifyJWT, async (req, res) => {
   try {
     const requestData = req.body;
 
@@ -205,9 +209,14 @@ app.get("/request", async (req, res) => {
   }
 });
 
-app.get("/my-request/:email", async (req, res) => {
+app.get("/my-request/:email", verifyJWT, async (req, res) => {
   try {
     const email = req.params.email;
+
+    // Security: ensure the requester can only access their own requests
+    if (email !== req.tokenEmail) {
+      return res.status(403).send({ message: "Forbidden" });
+    }
 
     const result = await requestCollection
       .find({ user: email })
@@ -224,6 +233,8 @@ app.get("/my-request/:email", async (req, res) => {
 });
 
 
+// ── User Routes ──
+
 app.post("/user", async (req, res) => {
   try {
     const userData = req.body;
@@ -231,9 +242,7 @@ app.post("/user", async (req, res) => {
     userData.created_at = new Date().toISOString();
     userData.last_logIn = new Date().toISOString();
 
-    const query = {
-      email: userData.email,
-    };
+    const query = { email: userData.email };
 
     const alreadyExists = await userCollection.findOne(query);
 
@@ -286,12 +295,11 @@ app.patch("/user/profile", verifyJWT, async (req, res) => {
     const updatedData = req.body;
 
     delete updatedData.email;
+    delete updatedData.role; // Security: prevent role escalation via profile update
 
     const result = await userCollection.updateOne(
       { email },
-      {
-        $set: updatedData,
-      }
+      { $set: updatedData }
     );
 
     res.send(result);
@@ -309,9 +317,7 @@ app.get("/users", verifyJWT, verifyADMIN, async (req, res) => {
     const adminEmail = req.tokenEmail;
 
     const result = await userCollection
-      .find({
-        email: { $ne: adminEmail },
-      })
+      .find({ email: { $ne: adminEmail } })
       .toArray();
 
     res.send(result);
@@ -330,9 +336,7 @@ app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
 
     const result = await userCollection.updateOne(
       { email },
-      {
-        $set: { role },
-      }
+      { $set: { role } }
     );
 
     await volunteerRequestCollection.deleteOne({ email });
@@ -348,14 +352,13 @@ app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
 });
 
 
+// ── Volunteer Routes ──
+
 app.post("/become-volunteer", verifyJWT, async (req, res) => {
   try {
     const email = req.tokenEmail;
 
-    const alreadyExists =
-      await volunteerRequestCollection.findOne({
-        email,
-      });
+    const alreadyExists = await volunteerRequestCollection.findOne({ email });
 
     if (alreadyExists) {
       return res.status(409).send({
@@ -363,10 +366,7 @@ app.post("/become-volunteer", verifyJWT, async (req, res) => {
       });
     }
 
-    const result =
-      await volunteerRequestCollection.insertOne({
-        email,
-      });
+    const result = await volunteerRequestCollection.insertOne({ email });
 
     res.send(result);
   } catch (error) {
@@ -378,10 +378,9 @@ app.post("/become-volunteer", verifyJWT, async (req, res) => {
   }
 });
 
-app.get("/volunteer-request", async (req, res) => {
+app.get("/volunteer-request", verifyJWT, verifyADMIN, async (req, res) => {
   try {
-    const result =
-      await volunteerRequestCollection.find().toArray();
+    const result = await volunteerRequestCollection.find().toArray();
 
     res.send(result);
   } catch (error) {
@@ -394,8 +393,9 @@ app.get("/volunteer-request", async (req, res) => {
 });
 
 
+// ── Payment / Donation Routes ──
 
-app.post("/create-checkout-session", async (req, res) => {
+app.post("/create-checkout-session", verifyJWT, async (req, res) => {
   try {
     const paymentInfo = req.body;
 
@@ -432,9 +432,7 @@ app.post("/create-checkout-session", async (req, res) => {
       mode: "payment",
     });
 
-    res.send({
-      url: session.url,
-    });
+    res.send({ url: session.url });
   } catch (error) {
     console.error(error);
 
@@ -448,8 +446,7 @@ app.post("/payment-success", async (req, res) => {
   try {
     const { sessionId } = req.body;
 
-    const session =
-      await stripe.checkout.sessions.retrieve(sessionId);
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     const donation = await donationCollection.findOne({
       transactionId: session.payment_intent,
@@ -458,24 +455,17 @@ app.post("/payment-success", async (req, res) => {
     if (session.status === "complete" && !donation) {
       const donationInfo = {
         transactionId: session.payment_intent,
-
         name: session.metadata.UserId,
-
         email: session.customer_email,
-
         donationAmount: session.amount_total / 100,
-
         payment_at: new Date().toISOString(),
-
         status: "pending",
       };
 
       await donationCollection.insertOne(donationInfo);
     }
 
-    res.send({
-      success: true,
-    });
+    res.send({ success: true });
   } catch (error) {
     console.error(error);
 
@@ -485,7 +475,7 @@ app.post("/payment-success", async (req, res) => {
   }
 });
 
-app.get("/donation", async (req, res) => {
+app.get("/donation", verifyJWT, verifyADMIN, async (req, res) => {
   try {
     const result = await donationCollection.find().toArray();
 
@@ -500,12 +490,20 @@ app.get("/donation", async (req, res) => {
 });
 
 
+// ─── GLOBAL ERROR HANDLER ─────────────────────────────────────────────────────
+
 app.use((err, req, res, next) => {
   console.error(err.stack);
 
   res.status(500).send({
     message: "Something broke!",
   });
+});
+
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
 
 module.exports = app;
