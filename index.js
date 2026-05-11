@@ -30,7 +30,6 @@ try {
 
   if (fbServiceKeyBase64) {
     const decoded = Buffer.from(fbServiceKeyBase64, "base64").toString("utf-8");
-
     const serviceAccount = JSON.parse(decoded);
 
     if (!admin.apps.length) {
@@ -54,32 +53,23 @@ try {
 const verifyJWT = async (req, res, next) => {
   try {
     if (!isFirebaseInitialized) {
-      return res.status(500).send({
-        message: "Firebase not initialized",
-      });
+      return res.status(500).send({ message: "Firebase not initialized" });
     }
 
     const authHeader = req.headers.authorization;
 
     if (!authHeader) {
-      return res.status(401).send({
-        message: "Unauthorized Access",
-      });
+      return res.status(401).send({ message: "Unauthorized Access" });
     }
 
     const token = authHeader.split(" ")[1];
-
     const decoded = await admin.auth().verifyIdToken(token);
-
     req.tokenEmail = decoded.email;
 
     next();
   } catch (error) {
     console.error("JWT Verify Error:", error);
-
-    res.status(401).send({
-      message: "Unauthorized Access",
-    });
+    res.status(401).send({ message: "Unauthorized Access" });
   }
 };
 
@@ -101,8 +91,7 @@ let donationCollection;
 
 async function connectDB() {
   try {
-    await client.connect(); // FIX: was commented out — MongoDB won't connect without this
-
+    await client.connect();
     console.log("MongoDB connected");
 
     const db = client.db("blood-donation");
@@ -113,7 +102,6 @@ async function connectDB() {
     donationCollection = db.collection("donation");
 
     await client.db("admin").command({ ping: 1 });
-
     console.log("MongoDB Ping Success");
   } catch (error) {
     console.error("MongoDB Connection Error:", error);
@@ -127,45 +115,31 @@ connectDB();
 
 const verifyADMIN = async (req, res, next) => {
   try {
-    const email = req.tokenEmail;
-
-    const user = await userCollection.findOne({ email });
+    const user = await userCollection.findOne({ email: req.tokenEmail });
 
     if (user?.role !== "admin") {
-      return res.status(403).send({
-        message: "Only admin can access this route",
-      });
+      return res.status(403).send({ message: "Only admin can access this route" });
     }
 
     next();
   } catch (error) {
     console.error("verifyADMIN Error:", error);
-
-    res.status(500).send({
-      message: "Internal Server Error",
-    });
+    res.status(500).send({ message: "Internal Server Error" });
   }
 };
 
 const verifyVOLUNTEER = async (req, res, next) => {
   try {
-    const email = req.tokenEmail;
-
-    const user = await userCollection.findOne({ email });
+    const user = await userCollection.findOne({ email: req.tokenEmail });
 
     if (user?.role !== "volunteer") {
-      return res.status(403).send({
-        message: "Only Volunteer Access this",
-      });
+      return res.status(403).send({ message: "Only Volunteer Access this" });
     }
 
     next();
   } catch (error) {
     console.error("verifyVOLUNTEER Error:", error);
-
-    res.status(500).send({
-      message: "Internal Server Error",
-    });
+    res.status(500).send({ message: "Internal Server Error" });
   }
 };
 
@@ -179,157 +153,117 @@ app.get("/", (req, res) => {
 
 // ── Request Routes ──
 
+// protected — only logged-in users can create a request
 app.post("/request", verifyJWT, async (req, res) => {
   try {
-    const requestData = req.body;
-
-    const result = await requestCollection.insertOne(requestData);
-
+    const result = await requestCollection.insertOne(req.body);
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to save request",
-    });
+    res.status(500).send({ message: "Failed to save request" });
   }
 });
 
+// public — anyone can browse blood requests
 app.get("/request", async (req, res) => {
   try {
     const result = await requestCollection.find().toArray();
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to fetch requests",
-    });
+    res.status(500).send({ message: "Failed to fetch requests" });
   }
 });
 
+// protected — user can only see their own requests
 app.get("/my-request/:email", verifyJWT, async (req, res) => {
   try {
     const email = req.params.email;
 
-    // Security: ensure the requester can only access their own requests
     if (email !== req.tokenEmail) {
       return res.status(403).send({ message: "Forbidden" });
     }
 
-    const result = await requestCollection
-      .find({ user: email })
-      .toArray();
-
+    const result = await requestCollection.find({ user: email }).toArray();
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to fetch user requests",
-    });
+    res.status(500).send({ message: "Failed to fetch user requests" });
   }
 });
 
 
 // ── User Routes ──
 
+// public — called on login/register to save user
 app.post("/user", async (req, res) => {
   try {
     const userData = req.body;
-
     userData.created_at = new Date().toISOString();
     userData.last_logIn = new Date().toISOString();
 
     const query = { email: userData.email };
-
     const alreadyExists = await userCollection.findOne(query);
 
     if (alreadyExists) {
       const result = await userCollection.updateOne(query, {
-        $set: {
-          last_logIn: new Date().toISOString(),
-        },
+        $set: { last_logIn: new Date().toISOString() },
       });
-
       return res.send(result);
     }
 
     userData.role = "donor";
-
     const result = await userCollection.insertOne(userData);
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to save user",
-    });
+    res.status(500).send({ message: "Failed to save user" });
   }
 });
 
+// ✅ protected — verifyJWT sets req.tokenEmail, which findOne uses to get the role
 app.get("/user/role", verifyJWT, async (req, res) => {
   try {
-    const result = await userCollection.findOne({
-      email: req.tokenEmail,
-    });
-
-    res.send({
-      role: result?.role,
-    });
+    const result = await userCollection.findOne({ email: req.tokenEmail });
+    res.send({ role: result?.role });
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to get role",
-    });
+    res.status(500).send({ message: "Failed to get role" });
   }
 });
 
+// protected — user can update their own profile
 app.patch("/user/profile", verifyJWT, async (req, res) => {
   try {
-    const email = req.tokenEmail;
-
     const updatedData = req.body;
-
     delete updatedData.email;
-    delete updatedData.role; // Security: prevent role escalation via profile update
+    delete updatedData.role; // prevent role escalation
 
     const result = await userCollection.updateOne(
-      { email },
+      { email: req.tokenEmail },
       { $set: updatedData }
     );
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to update profile",
-    });
+    res.status(500).send({ message: "Failed to update profile" });
   }
 });
 
+// protected + admin only
 app.get("/users", verifyJWT, verifyADMIN, async (req, res) => {
   try {
-    const adminEmail = req.tokenEmail;
-
     const result = await userCollection
-      .find({ email: { $ne: adminEmail } })
+      .find({ email: { $ne: req.tokenEmail } })
       .toArray();
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to fetch users",
-    });
+    res.status(500).send({ message: "Failed to fetch users" });
   }
 });
 
+// protected + admin only
 app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
   try {
     const { email, role } = req.body;
@@ -340,112 +274,86 @@ app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
     );
 
     await volunteerRequestCollection.deleteOne({ email });
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to update role",
-    });
+    res.status(500).send({ message: "Failed to update role" });
   }
 });
 
 
 // ── Volunteer Routes ──
 
+// protected — must be logged in to request volunteer
 app.post("/become-volunteer", verifyJWT, async (req, res) => {
   try {
     const email = req.tokenEmail;
-
     const alreadyExists = await volunteerRequestCollection.findOne({ email });
 
     if (alreadyExists) {
-      return res.status(409).send({
-        message: "Already Requested, please wait!",
-      });
+      return res.status(409).send({ message: "Already Requested, please wait!" });
     }
 
     const result = await volunteerRequestCollection.insertOne({ email });
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to submit volunteer request",
-    });
+    res.status(500).send({ message: "Failed to submit volunteer request" });
   }
 });
 
+// protected + admin only
 app.get("/volunteer-request", verifyJWT, verifyADMIN, async (req, res) => {
   try {
     const result = await volunteerRequestCollection.find().toArray();
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to fetch volunteer requests",
-    });
+    res.status(500).send({ message: "Failed to fetch volunteer requests" });
   }
 });
 
 
 // ── Payment / Donation Routes ──
 
-app.post("/create-checkout-session",  async (req, res) => {
+// ✅ protected — must be logged in to donate
+app.post("/create-checkout-session", verifyJWT, async (req, res) => {
   try {
     const paymentInfo = req.body;
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-
       line_items: [
         {
           price_data: {
             currency: "usd",
-
-            product_data: {
-              name: "Medical Fund Donation",
-            },
-
+            product_data: { name: "Medical Fund Donation" },
             unit_amount: paymentInfo.amount * 100,
           },
-
           quantity: 1,
         },
       ],
-
       metadata: {
         UserId: paymentInfo?.name,
         email: paymentInfo?.email,
       },
-
       success_url: `${process.env.CLIENT_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-
       cancel_url: `${process.env.CLIENT_DOMAIN}/funding`,
-
       customer_email: paymentInfo?.email,
-
       mode: "payment",
     });
 
     res.send({ url: session.url });
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Stripe session failed",
-    });
+    res.status(500).send({ message: "Stripe session failed" });
   }
 });
 
+// public — Stripe redirects here after payment, no user session available
 app.post("/payment-success", async (req, res) => {
   try {
     const { sessionId } = req.body;
-
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     const donation = await donationCollection.findOne({
@@ -453,39 +361,31 @@ app.post("/payment-success", async (req, res) => {
     });
 
     if (session.status === "complete" && !donation) {
-      const donationInfo = {
+      await donationCollection.insertOne({
         transactionId: session.payment_intent,
         name: session.metadata.UserId,
         email: session.customer_email,
         donationAmount: session.amount_total / 100,
         payment_at: new Date().toISOString(),
         status: "pending",
-      };
-
-      await donationCollection.insertOne(donationInfo);
+      });
     }
 
     res.send({ success: true });
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Payment verification failed",
-    });
+    res.status(500).send({ message: "Payment verification failed" });
   }
 });
 
+// public — donation records are shown on the public funding page
 app.get("/donation", async (req, res) => {
   try {
     const result = await donationCollection.find().toArray();
-
     res.send(result);
   } catch (error) {
     console.error(error);
-
-    res.status(500).send({
-      message: "Failed to fetch donations",
-    });
+    res.status(500).send({ message: "Failed to fetch donations" });
   }
 });
 
@@ -494,11 +394,11 @@ app.get("/donation", async (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
-
-  res.status(500).send({
-    message: "Something broke!",
-  });
+  res.status(500).send({ message: "Something broke!" });
 });
+
+
+// ─── START SERVER ─────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 5000;
 
