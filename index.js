@@ -395,7 +395,7 @@ app.get("/volunteer-request", verifyJWT, verifyADMIN, async (req, res) => {
 
 // ── Payment / Donation Routes ──
 
-app.post("/create-checkout-session", verifyJWT, async (req, res) => {
+app.post("/create-checkout-session",  async (req, res) => {
   try {
     const paymentInfo = req.body;
 
