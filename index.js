@@ -11,17 +11,30 @@ dns.setServers(["1.1.1.1", "8.8.8.8"]);
 
 const app = express();
 
+const allowedOrigins = [
+  "https://blood-donation-7fa22.web.app",
+  "https://blood-donation-7fa22.firebaseapp.com",
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+
 app.use(
   cors({
-    origin: process.env.CLIENT_DOMAIN,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.error("CORS blocked origin:", origin);
+        callback(new Error(`CORS blocked: ${origin}`));
+      }
+    },
     credentials: true,
   })
 );
 
 app.use(express.json());
 
-
-// ─── FIREBASE INIT ────────────────────────────────────────────────────────────
+//  FIREBASE INIT 
 
 let isFirebaseInitialized = false;
 
@@ -48,7 +61,7 @@ try {
 }
 
 
-// ─── JWT VERIFY ───────────────────────────────────────────────────────────────
+//  JWT VERIFY 
 
 const verifyJWT = async (req, res, next) => {
   try {
@@ -74,7 +87,7 @@ const verifyJWT = async (req, res, next) => {
 };
 
 
-// ─── MONGODB ──────────────────────────────────────────────────────────────────
+//  MONGODB 
 
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -111,7 +124,7 @@ async function connectDB() {
 connectDB();
 
 
-// ─── ROLE MIDDLEWARES ─────────────────────────────────────────────────────────
+//  ROLE MIDDLEWARES
 
 const verifyADMIN = async (req, res, next) => {
   try {
@@ -144,14 +157,14 @@ const verifyVOLUNTEER = async (req, res, next) => {
 };
 
 
-// ─── ROUTES ───────────────────────────────────────────────────────────────────
+//  ROUTES 
 
 app.get("/", (req, res) => {
   res.send("Blood Donation Server Running");
 });
 
 
-// ── Request Routes ──
+// Request Routes 
 
 // protected — only logged-in users can create a request
 app.post("/request", verifyJWT, async (req, res) => {
@@ -193,7 +206,7 @@ app.get("/my-request/:email", verifyJWT, async (req, res) => {
 });
 
 
-// ── User Routes ──
+//  User Routes
 
 // public — called on login/register to save user
 app.post("/user", async (req, res) => {
@@ -221,7 +234,7 @@ app.post("/user", async (req, res) => {
   }
 });
 
-// ✅ protected — verifyJWT sets req.tokenEmail, which findOne uses to get the role
+//  protected — verifyJWT sets req.tokenEmail, which findOne uses to get the role
 app.get("/user/role", verifyJWT, async (req, res) => {
   try {
     const result = await userCollection.findOne({ email: req.tokenEmail });
@@ -282,7 +295,7 @@ app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
 });
 
 
-// ── Volunteer Routes ──
+// Volunteer Routes 
 
 // protected — must be logged in to request volunteer
 app.post("/become-volunteer", verifyJWT, async (req, res) => {
@@ -314,9 +327,9 @@ app.get("/volunteer-request", verifyJWT, verifyADMIN, async (req, res) => {
 });
 
 
-// ── Payment / Donation Routes ──
+// Payment / Donation Routes 
 
-// ✅ protected — must be logged in to donate
+//  protected — must be logged in to donate
 app.post("/create-checkout-session", verifyJWT, async (req, res) => {
   try {
     const paymentInfo = req.body;
@@ -390,7 +403,7 @@ app.get("/donation", async (req, res) => {
 });
 
 
-// ─── GLOBAL ERROR HANDLER ─────────────────────────────────────────────────────
+// GLOBAL ERROR HANDLER 
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -398,7 +411,7 @@ app.use((err, req, res, next) => {
 });
 
 
-// ─── START SERVER ─────────────────────────────────────────────────────────────
+//  START SERVER
 
 const PORT = process.env.PORT || 5000;
 
