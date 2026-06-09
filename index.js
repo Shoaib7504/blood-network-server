@@ -34,7 +34,7 @@ app.use(
 
 app.use(express.json());
 
-//  FIREBASE INIT 
+// FIREBASE INIT 
 
 let isFirebaseInitialized = false;
 
@@ -60,7 +60,6 @@ try {
   console.error("Firebase initialization failed:", error);
 }
 
-
 //  JWT VERIFY 
 
 const verifyJWT = async (req, res, next) => {
@@ -71,21 +70,25 @@ const verifyJWT = async (req, res, next) => {
 
     const authHeader = req.headers.authorization;
 
-    if (!authHeader) {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).send({ message: "Unauthorized Access" });
     }
 
     const token = authHeader.split(" ")[1];
+
+    if (!token) {
+      return res.status(401).send({ message: "Unauthorized Access" });
+    }
+
     const decoded = await admin.auth().verifyIdToken(token);
     req.tokenEmail = decoded.email;
 
     next();
   } catch (error) {
-    console.error("JWT Verify Error:", error);
+    console.error("JWT Verify Error:", error.message);
     res.status(401).send({ message: "Unauthorized Access" });
   }
 };
-
 
 //  MONGODB 
 
@@ -123,8 +126,7 @@ async function connectDB() {
 
 connectDB();
 
-
-//  ROLE MIDDLEWARES
+//  ROLE MIDDLEWARES 
 
 const verifyADMIN = async (req, res, next) => {
   try {
@@ -141,38 +143,27 @@ const verifyADMIN = async (req, res, next) => {
   }
 };
 
-const verifyVOLUNTEER = async (req, res, next) => {
-  try {
-    const user = await userCollection.findOne({ email: req.tokenEmail });
-
-    if (user?.role !== "volunteer") {
-      return res.status(403).send({ message: "Only Volunteer Access this" });
-    }
-
-    next();
-  } catch (error) {
-    console.error("verifyVOLUNTEER Error:", error);
-    res.status(500).send({ message: "Internal Server Error" });
-  }
-};
-
-
 //  ROUTES 
 
 app.get("/", (req, res) => {
   res.send("Blood Donation Server Running");
 });
 
+//  Request Routes 
 
-// Request Routes 
-
-// protected — only logged-in users can create a request
+// FIX: force user field from verified token — never trust frontend body email
 app.post("/request", verifyJWT, async (req, res) => {
   try {
-    const result = await requestCollection.insertOne(req.body);
+    const requestData = {
+      ...req.body,
+      user: req.tokenEmail, //  always overwrite with server-verified email
+      created_at: new Date().toISOString(),
+    };
+
+    const result = await requestCollection.insertOne(requestData);
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("POST /request Error:", error);
     res.status(500).send({ message: "Failed to save request" });
   }
 });
@@ -183,28 +174,32 @@ app.get("/request", async (req, res) => {
     const result = await requestCollection.find().toArray();
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("GET /request Error:", error);
     res.status(500).send({ message: "Failed to fetch requests" });
   }
 });
 
-// protected — user can only see their own requests
+// FIX: query uses req.tokenEmail directly — no mismatch possible
 app.get("/my-request/:email", verifyJWT, async (req, res) => {
   try {
     const email = req.params.email;
 
+    //  make sure URL email matches the token email
     if (email !== req.tokenEmail) {
       return res.status(403).send({ message: "Forbidden" });
     }
 
-    const result = await requestCollection.find({ user: email }).toArray();
+    //  query by user field which is now always set to tokenEmail on POST
+    const result = await requestCollection
+      .find({ user: req.tokenEmail })
+      .toArray();
+
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("GET /my-request Error:", error);
     res.status(500).send({ message: "Failed to fetch user requests" });
   }
 });
-
 
 //  User Routes
 
@@ -229,18 +224,18 @@ app.post("/user", async (req, res) => {
     const result = await userCollection.insertOne(userData);
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("POST /user Error:", error);
     res.status(500).send({ message: "Failed to save user" });
   }
 });
 
-//  protected — verifyJWT sets req.tokenEmail, which findOne uses to get the role
+// protected — get logged-in user's role from token
 app.get("/user/role", verifyJWT, async (req, res) => {
   try {
     const result = await userCollection.findOne({ email: req.tokenEmail });
     res.send({ role: result?.role });
   } catch (error) {
-    console.error(error);
+    console.error("GET /user/role Error:", error);
     res.status(500).send({ message: "Failed to get role" });
   }
 });
@@ -249,8 +244,8 @@ app.get("/user/role", verifyJWT, async (req, res) => {
 app.patch("/user/profile", verifyJWT, async (req, res) => {
   try {
     const updatedData = req.body;
-    delete updatedData.email;
-    delete updatedData.role; // prevent role escalation
+    delete updatedData.email; // prevent email change
+    delete updatedData.role;  // prevent role escalation
 
     const result = await userCollection.updateOne(
       { email: req.tokenEmail },
@@ -258,12 +253,12 @@ app.patch("/user/profile", verifyJWT, async (req, res) => {
     );
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("PATCH /user/profile Error:", error);
     res.status(500).send({ message: "Failed to update profile" });
   }
 });
 
-// protected + admin only
+// protected + admin only — get all users except self
 app.get("/users", verifyJWT, verifyADMIN, async (req, res) => {
   try {
     const result = await userCollection
@@ -271,12 +266,12 @@ app.get("/users", verifyJWT, verifyADMIN, async (req, res) => {
       .toArray();
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("GET /users Error:", error);
     res.status(500).send({ message: "Failed to fetch users" });
   }
 });
 
-// protected + admin only
+// protected + admin only — update a user's role
 app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
   try {
     const { email, role } = req.body;
@@ -289,15 +284,14 @@ app.patch("/update-role", verifyJWT, verifyADMIN, async (req, res) => {
     await volunteerRequestCollection.deleteOne({ email });
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("PATCH /update-role Error:", error);
     res.status(500).send({ message: "Failed to update role" });
   }
 });
 
+//  Volunteer Routes 
 
-// Volunteer Routes 
-
-// protected — must be logged in to request volunteer
+// protected — must be logged in to request volunteer status
 app.post("/become-volunteer", verifyJWT, async (req, res) => {
   try {
     const email = req.tokenEmail;
@@ -310,26 +304,25 @@ app.post("/become-volunteer", verifyJWT, async (req, res) => {
     const result = await volunteerRequestCollection.insertOne({ email });
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("POST /become-volunteer Error:", error);
     res.status(500).send({ message: "Failed to submit volunteer request" });
   }
 });
 
-// protected + admin only
+// protected + admin only — view all volunteer requests
 app.get("/volunteer-request", verifyJWT, verifyADMIN, async (req, res) => {
   try {
     const result = await volunteerRequestCollection.find().toArray();
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("GET /volunteer-request Error:", error);
     res.status(500).send({ message: "Failed to fetch volunteer requests" });
   }
 });
 
+//  Payment / Donation Routes
 
-// Payment / Donation Routes 
-
-//  protected — must be logged in to donate
+// protected — must be logged in to donate
 app.post("/create-checkout-session", verifyJWT, async (req, res) => {
   try {
     const paymentInfo = req.body;
@@ -358,12 +351,12 @@ app.post("/create-checkout-session", verifyJWT, async (req, res) => {
 
     res.send({ url: session.url });
   } catch (error) {
-    console.error(error);
+    console.error("POST /create-checkout-session Error:", error);
     res.status(500).send({ message: "Stripe session failed" });
   }
 });
 
-// public — Stripe redirects here after payment, no user session available
+// public — Stripe redirects here after payment
 app.post("/payment-success", async (req, res) => {
   try {
     const { sessionId } = req.body;
@@ -386,32 +379,29 @@ app.post("/payment-success", async (req, res) => {
 
     res.send({ success: true });
   } catch (error) {
-    console.error(error);
+    console.error("POST /payment-success Error:", error);
     res.status(500).send({ message: "Payment verification failed" });
   }
 });
 
-// public — donation records are shown on the public funding page
+// public — donation records shown on public funding page
 app.get("/donation", async (req, res) => {
   try {
     const result = await donationCollection.find().toArray();
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("GET /donation Error:", error);
     res.status(500).send({ message: "Failed to fetch donations" });
   }
 });
 
-
-// GLOBAL ERROR HANDLER 
-
+//  GLOBAL ERROR HANDLER 
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).send({ message: "Something broke!" });
 });
 
-
-//  START SERVER
+//  START SERVER 
 
 const PORT = process.env.PORT || 5000;
 
