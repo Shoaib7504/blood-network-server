@@ -7,7 +7,11 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 const admin = require("firebase-admin");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
-dns.setServers(["1.1.1.1", "8.8.8.8"]);
+try {
+  dns.setServers(["1.1.1.1", "8.8.8.8"]);
+} catch (error) {
+  console.warn("dns.setServers failed:", error.message);
+}
 
 const app = express();
 
@@ -106,25 +110,36 @@ let volunteerRequestCollection;
 let donationCollection;
 
 async function connectDB() {
-  try {
-    await client.connect();
-    console.log("MongoDB connected");
+  if (!requestCollection || !userCollection || !volunteerRequestCollection || !donationCollection) {
+    try {
+      await client.connect();
+      console.log("MongoDB connected");
 
-    const db = client.db("blood-donation");
+      const db = client.db("blood-donation");
 
-    requestCollection = db.collection("requests");
-    userCollection = db.collection("users");
-    volunteerRequestCollection = db.collection("volunteerRequest");
-    donationCollection = db.collection("donation");
+      requestCollection = db.collection("requests");
+      userCollection = db.collection("users");
+      volunteerRequestCollection = db.collection("volunteerRequest");
+      donationCollection = db.collection("donation");
 
-    await client.db("admin").command({ ping: 1 });
-    console.log("MongoDB Ping Success");
-  } catch (error) {
-    console.error("MongoDB Connection Error:", error);
+      await client.db("admin").command({ ping: 1 });
+      console.log("MongoDB Ping Success");
+    } catch (error) {
+      console.error("MongoDB Connection Error:", error);
+      throw error;
+    }
   }
 }
 
-connectDB();
+// Middleware to ensure database is connected before handling any requests
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    res.status(500).send({ message: "Database connection failed" });
+  }
+});
 
 //  ROLE MIDDLEWARES 
 
@@ -405,8 +420,10 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
 
 module.exports = app;
